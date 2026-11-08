@@ -4,27 +4,37 @@ import android.content.SharedPreferences
 
 data class PrintSettings(
     val paperDots: Int = 384,      // 58mm = 384 , 80mm = 576
-    val textSize: Float = 26f,     // بالنقاط (dots)
+    val textSize: Float = 26f,
     val bold: Boolean = true,
     val extraBold: Boolean = false,
     val lineSpacing: Float = 1.15f,
     val align: Int = 0,            // 0 تلقائي 1 يمين 2 وسط 3 يسار
     val threshold: Int = 150,      // أعلى = أغمق
-    val digits: Int = 0,           // 0 كما هي 1 أرقام إنجليزية 2 أرقام عربية
+    val digits: Int = 0,           // 0 كما هي 1 إنجليزية 2 عربية
     val margin: Int = 6,
     val feedLines: Int = 4,
     val cut: Boolean = false,
-    val delayMs: Int = 25,         // تأخير بين الحزم لمنع الرموز الصينية
-    val compat: Boolean = false    // وضع ESC * للطابعات القديمة
+    val mode: Int = 1,             // 0 = GS v 0 ، 1 = ESC * 24 نقطة ، 2 = ESC * 8 نقاط
+    val chunkDelay: Int = 8,       // تأخير بين الحزم الصغيرة (ms)
+    val unitDelay: Int = 60        // تأخير بين شرائح الصورة (ms)
 )
 
 object Store {
     fun load(p: SharedPreferences) = PrintSettings(
-        p.getInt("paper", 384), p.getFloat("size", 26f), p.getBoolean("bold", true),
-        p.getBoolean("xbold", false), p.getFloat("ls", 1.15f), p.getInt("align", 0),
-        p.getInt("thr", 150), p.getInt("digits", 0), p.getInt("margin", 6),
-        p.getInt("feed", 4), p.getBoolean("cut", false), p.getInt("delay", 25),
-        p.getBoolean("compat", false)
+        paperDots = p.getInt("paper", 384),
+        textSize = p.getFloat("size", 26f),
+        bold = p.getBoolean("bold", true),
+        extraBold = p.getBoolean("xbold", false),
+        lineSpacing = p.getFloat("ls", 1.15f),
+        align = p.getInt("align", 0),
+        threshold = p.getInt("thr", 150),
+        digits = p.getInt("digits", 0),
+        margin = p.getInt("margin", 6),
+        feedLines = p.getInt("feed", 4),
+        cut = p.getBoolean("cut", false),
+        mode = p.getInt("mode2", 1),
+        chunkDelay = p.getInt("cdelay", 8),
+        unitDelay = p.getInt("udelay", 60)
     )
 
     fun save(p: SharedPreferences, s: PrintSettings) {
@@ -33,8 +43,8 @@ object Store {
             .putFloat("ls", s.lineSpacing).putInt("align", s.align)
             .putInt("thr", s.threshold).putInt("digits", s.digits)
             .putInt("margin", s.margin).putInt("feed", s.feedLines)
-            .putBoolean("cut", s.cut).putInt("delay", s.delayMs)
-            .putBoolean("compat", s.compat).apply()
+            .putBoolean("cut", s.cut).putInt("mode2", s.mode)
+            .putInt("cdelay", s.chunkDelay).putInt("udelay", s.unitDelay).apply()
     }
 }
 

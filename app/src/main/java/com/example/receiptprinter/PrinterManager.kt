@@ -51,16 +51,25 @@ class PrinterManager(ctx: Context) {
     }
 
     /** إرسال على حزم صغيرة مع تأخير: هذا يمنع تلف البيانات والرموز الصينية */
-    suspend fun send(data: ByteArray, delayMs: Int) = withContext(Dispatchers.IO) {
-        val os = socket?.outputStream ?: throw Exception("الطابعة غير متصلة")
-        var off = 0
-        val chunk = 512
-        while (off < data.size) {
-            val n = minOf(chunk, data.size - off)
-            os.write(data, off, n); os.flush(); off += n
-            if (delayMs > 0) delay(delayMs.toLong())
+    /** إرسال حزماً صغيرة (128 بايت) مع انتظار بعد كل حزمة وبعد كل شريحة */
+    suspend fun sendUnits(units: List<ByteArray>, chunkDelay: Int, unitDelay: Int) =
+        withContext(Dispatchers.IO) {
+            val os = socket?.outputStream ?: throw Exception("الطابعة غير متصلة")
+            delay(400)
+            val chunk = 128
+            for (u in units) {
+                var off = 0
+                while (off < u.size) {
+                    val n = minOf(chunk, u.size - off)
+                    os.write(u, off, n)
+                    os.flush()
+                    off += n
+                    if (chunkDelay > 0) delay(chunkDelay.toLong())
+                }
+                if (unitDelay > 0) delay(unitDelay.toLong())
+            }
+            delay(300)
         }
-    }
 
     fun close() {
         try { socket?.close() } catch (_: Exception) {}

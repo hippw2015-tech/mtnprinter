@@ -156,9 +156,13 @@ fun App() {
 
         // 4) خيارات متقدمة
         Text("متقدم", style = MaterialTheme.typography.titleMedium)
-        SliderRow("تأخير الإرسال (ms) - ارفعه إذا ظهرت رموز غريبة", s.delayMs.toString(), s.delayMs.toFloat(), 0f..100f) { s = s.copy(delayMs = it.roundToInt()) }
+        Text("طريقة إرسال الصورة (جرّبها بالترتيب إن ظهرت رموز)")
+        Chips(listOf("ESC * 24", "ESC * 8", "GS v 0"), when (s.mode) { 1 -> 0; 2 -> 1; else -> 2 }) {
+            s = s.copy(mode = when (it) { 0 -> 1; 1 -> 2; else -> 0 })
+        }
+        SliderRow("تأخير بين الحزم (ms)", s.chunkDelay.toString(), s.chunkDelay.toFloat(), 0f..40f) { s = s.copy(chunkDelay = it.roundToInt()) }
+        SliderRow("تأخير بين الشرائح (ms) - ارفعه إذا ظهرت رموز", s.unitDelay.toString(), s.unitDelay.toFloat(), 0f..250f) { s = s.copy(unitDelay = it.roundToInt()) }
         SliderRow("أسطر فارغة بعد الطباعة", s.feedLines.toString(), s.feedLines.toFloat(), 0f..12f) { s = s.copy(feedLines = it.roundToInt()) }
-        Row { Checkbox(s.compat, { s = s.copy(compat = it) }); Text("وضع توافق للطابعات القديمة (ESC *)", Modifier.padding(top = 12.dp)) }
         Row { Checkbox(s.cut, { s = s.copy(cut = it) }); Text("قصّ الورقة بعد الطباعة", Modifier.padding(top = 12.dp)) }
 
         // 5) المعاينة والطباعة
@@ -174,17 +178,29 @@ fun App() {
                     val dev = selected ?: throw Exception("اختر الطابعة أولاً")
                     status = "جارٍ الاتصال..."; printer.connect(dev)
                     status = "جارٍ الطباعة..."
-                    printer.send(EscPos.build(bmp, s), s.delayMs)
+                    printer.sendUnits(EscPos.build(bmp, s), s.chunkDelay, s.unitDelay)
                     status = "تمت الطباعة ✓"
                 } catch (e: Exception) { status = "خطأ: ${e.message}"; printer.close() }
                 busy = false
             }
         }
+        OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+            scope.launch {
+                busy = true
+                try {
+                    val dev = selected ?: throw Exception("اختر الطابعة أولاً")
+                    status = "جارٍ الاتصال..."; printer.connect(dev)
+                    printer.sendUnits(EscPos.textTest(), s.chunkDelay, s.unitDelay)
+                    status = "تم إرسال نص الاختبار"
+                } catch (e: Exception) { status = "خطأ: ${e.message}"; printer.close() }
+                busy = false
+            }
+        }) { Text("اختبار 1: نص عادي (للتأكد من الاتصال)") }
         Button(enabled = !busy && preview != null, modifier = Modifier.fillMaxWidth(),
             onClick = { preview?.let { print(it) } }) { Text("طباعة") }
         OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
             print(ReceiptRenderer.render("اختبار الطباعة\nTest 12345\n0123456789  ٠١٢٣٤٥٦٧٨٩", s))
-        }) { Text("طباعة اختبار") }
+        }) { Text("اختبار 2: صورة قصيرة") }
         if (status.isNotEmpty()) Text(status)
     }
 }
