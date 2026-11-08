@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,20 +26,68 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Restore OCR data cache
+        id: ocr-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/tessdata
+          key: tessdata-fast-v1
+
       - name: Download OCR language data (Arabic + English)
+        if: steps.ocr-cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          mkdir -p app/src/main/assets/tessdata
-          curl -fL --retry 3 -o app/src/main/assets/tessdata/ara.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata
-          curl -fL --retry 3 -o app/src/main/assets/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
-          ls -lh app/src/main/assets/tessdata
+          set -euo pipefail
+          DIR=app/src/main/assets/tessdata
+          mkdir -p "$DIR"
+
+          download() {
+            lang="$1"
+            out="$DIR/$lang.traineddata"
+            urls=(
+              "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang.traineddata"
+              "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main/$lang.traineddata"
+              "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata"
+            )
+            for round in 1 2 3; do
+              for url in "${urls[@]}"; do
+                echo "Trying $url (round $round)"
+                if curl -fsSL --connect-timeout 20 --max-time 180 -o "$out" "$url"; then
+                  size=$(stat -c%s "$out")
+                  if [ "$size" -gt 500000 ]; then
+                    echo "OK: $lang ($size bytes)"
+                    return 0
+                  fi
+                  echo "File too small ($size bytes), trying next source"
+                fi
+                rm -f "$out"
+              done
+              sleep $((round * 5))
+            done
+            echo "::error::Failed to download $lang.traineddata from all sources"
+            return 1
+          }
+
+          download eng
+          download ara
+
+      - name: Verify OCR data
+        shell: bash
+        run: ls -lh app/src/main/assets/tessdata
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.7
 
-      - name: Build debug APK
-        run: gradle assembleDebug --stacktrace --no-daemon
+      - name: Build debug APK (with one retry)
+        shell: bash
+        run: |
+          gradle assembleDebug --stacktrace --no-daemon || {
+            echo "First attempt failed, retrying once..."
+            sleep 10
+            gradle assembleDebug --stacktrace --no-daemon
+          }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
