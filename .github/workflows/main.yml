@@ -12,10 +12,13 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GRADLE_VERSION: "8.7"
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +29,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      # ---------- OCR language data ----------
       - name: Restore OCR data cache
         id: ocr-cache
         uses: actions/cache@v4
@@ -33,61 +37,100 @@ jobs:
           path: app/src/main/assets/tessdata
           key: tessdata-fast-v1
 
-      - name: Download OCR language data (Arabic + English)
+      - name: Download OCR language data
         if: steps.ocr-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
           DIR=app/src/main/assets/tessdata
           mkdir -p "$DIR"
-
           download() {
-            lang="$1"
-            out="$DIR/$lang.traineddata"
+            lang="$1"; out="$DIR/$lang.traineddata"
             urls=(
               "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/$lang.traineddata"
               "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main/$lang.traineddata"
               "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata"
             )
-            for round in 1 2 3; do
+            for round in 1 2 3 4; do
               for url in "${urls[@]}"; do
                 echo "Trying $url (round $round)"
                 if curl -fsSL --connect-timeout 20 --max-time 180 -o "$out" "$url"; then
                   size=$(stat -c%s "$out")
-                  if [ "$size" -gt 500000 ]; then
-                    echo "OK: $lang ($size bytes)"
-                    return 0
-                  fi
-                  echo "File too small ($size bytes), trying next source"
+                  if [ "$size" -gt 500000 ]; then echo "OK $lang ($size bytes)"; return 0; fi
                 fi
                 rm -f "$out"
               done
-              sleep $((round * 5))
+              sleep $((round * 8))
             done
             echo "::error::Failed to download $lang.traineddata from all sources"
             return 1
           }
-
           download eng
           download ara
 
-      - name: Verify OCR data
-        shell: bash
-        run: ls -lh app/src/main/assets/tessdata
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v3
+      # ---------- Gradle (own installer with mirrors + cache) ----------
+      - name: Restore Gradle distribution cache
+        id: gradle-dist
+        uses: actions/cache@v4
         with:
-          gradle-version: 8.7
+          path: ~/gradle-dist
+          key: gradle-dist-${{ env.GRADLE_VERSION }}
 
-      - name: Build debug APK (with one retry)
+      - name: Download Gradle
+        if: steps.gradle-dist.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          gradle assembleDebug --stacktrace --no-daemon || {
-            echo "First attempt failed, retrying once..."
-            sleep 10
-            gradle assembleDebug --stacktrace --no-daemon
-          }
+          set -euo pipefail
+          mkdir -p ~/gradle-dist
+          zip=~/gradle-dist/gradle-${GRADLE_VERSION}-bin.zip
+          urls=(
+            "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            "https://downloads.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            "https://github.com/gradle/gradle-distributions/releases/download/v${GRADLE_VERSION}.0/gradle-${GRADLE_VERSION}-bin.zip"
+            "https://mirrors.cloud.tencent.com/gradle/gradle-${GRADLE_VERSION}-bin.zip"
+          )
+          for round in 1 2 3 4; do
+            for url in "${urls[@]}"; do
+              echo "Trying $url (round $round)"
+              if curl -fsSL --connect-timeout 20 --max-time 300 -o "$zip" "$url" && unzip -tq "$zip" >/dev/null 2>&1; then
+                echo "Gradle downloaded OK"; exit 0
+              fi
+              rm -f "$zip"
+            done
+            sleep $((round * 8))
+          done
+          echo "::error::Failed to download Gradle from all sources"
+          exit 1
+
+      - name: Install Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q ~/gradle-dist/gradle-${GRADLE_VERSION}-bin.zip -d ~/gradle-home
+          echo "$HOME/gradle-home/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Restore Gradle dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+          key: gradle-deps-${{ hashFiles('**/*.gradle.kts', '**/gradle.properties') }}
+          restore-keys: gradle-deps-
+
+      # ---------- Build ----------
+      - name: Build debug APK (up to 3 attempts)
+        shell: bash
+        run: |
+          gradle --version
+          for attempt in 1 2 3; do
+            echo "=== Build attempt $attempt ==="
+            if gradle assembleDebug --stacktrace --no-daemon; then
+              exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          echo "::error::Build failed after 3 attempts"
+          exit 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
